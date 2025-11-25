@@ -1,5 +1,4 @@
-  
-    <!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
@@ -21,7 +20,7 @@
     .container {
       padding: 2rem;
       border-radius: 16px;
-      max-width: 500px;
+      max-width: 700px;
       width: 100%;
       box-shadow: 0 0 10px rgba(0,0,0,0.1);
       background-color: #ffffff;
@@ -44,10 +43,19 @@
     button:hover {
       background-color: #1e40af;
     }
-    img {
-      max-width: 100%;
-      margin-top: 1rem;
+    img.preview-img {
+      max-width: 150px;
+      max-height: 150px;
+      margin: 0.25rem;
       border-radius: 8px;
+      object-fit: cover;
+      border: 1px solid #e5e7eb;
+    }
+    .preview-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.5rem;
+      margin-top: 0.5rem;
     }
     .download-btn {
       display: inline-block;
@@ -59,42 +67,78 @@
       border-radius: 8px;
       text-decoration: none;
     }
-    .download-btn:hover {
-      background-color: #1e40af;
-    }
+    .download-btn:hover { background-color: #1e40af; }
+    .small { font-size: 0.85rem; color: #374151; }
   </style>
+  <!-- jsPDF for PDF generation -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 </head>
 <body>
   <div class="container">
     <h1>Image Converter Tool</h1>
-    <input type="file" id="imageInput" accept="image/*" />
+
+    <!-- allow multiple so user can select 1 or many images -->
+    <input type="file" id="imageInput" accept="image/*" multiple />
+
     <select id="formatSelect">
       <option value="png">PNG</option>
       <option value="jpeg">JPG</option>
       <option value="gif">GIF</option>
       <option value="webp">WebP</option>
     </select>
-    <button onclick="convertImage()">Convert Image</button>
+
+    <button id="convertSingleBtn">Convert First Image (existing)</button>
+    <button id="convertPdfBtn">Convert Selected Images → One PDF</button>
 
     <div id="previewContainer"></div>
   </div>
 
   <script>
-    let originalFile;
+    // Keep compatibility with original behaviour but support multiple files
+    let originalFiles = [];
 
-    document.getElementById('imageInput').addEventListener('change', function(e) {
-      originalFile = e.target.files[0];
-      const previewContainer = document.getElementById('previewContainer');
-      previewContainer.innerHTML = '<p>Original Preview:</p>' + '<img src="' + URL.createObjectURL(originalFile) + '" alt="Original Image">';
+    const imageInput = document.getElementById('imageInput');
+    const previewContainer = document.getElementById('previewContainer');
+    const formatSelect = document.getElementById('formatSelect');
+
+    imageInput.addEventListener('change', function(e) {
+      originalFiles = Array.from(e.target.files || []);
+      renderPreviews();
     });
 
-    function convertImage() {
-      if (!originalFile) return alert("Please upload an image first.");
+    function renderPreviews() {
+      previewContainer.innerHTML = '';
+      if (!originalFiles.length) return;
 
-      const format = document.getElementById("formatSelect").value;
+      const p = document.createElement('p');
+      p.textContent = 'Original Preview(s):';
+      previewContainer.appendChild(p);
+
+      const row = document.createElement('div');
+      row.className = 'preview-row';
+
+      originalFiles.forEach((f, idx) => {
+        const img = document.createElement('img');
+        img.className = 'preview-img';
+        img.src = URL.createObjectURL(f);
+        img.alt = 'Original ' + (idx+1);
+        row.appendChild(img);
+      });
+
+      previewContainer.appendChild(row);
+    }
+
+    // --- Existing single-image conversion (keeps original behavior) ---
+    document.getElementById('convertSingleBtn').addEventListener('click', convertImage);
+
+    function convertImage() {
+      if (!originalFiles.length) return alert("Please upload an image first.");
+
+      const originalFile = originalFiles[0]; // use the first selected file (same as before)
+      const format = formatSelect.value;
       const reader = new FileReader();
-      const canvas = document.createElement("canvas");
-      const ctx = canvas.getContext("2d");
+      const canvas = document.createElement('canvas');
+      const ctx = canvas.getContext('2d');
       const img = new Image();
 
       reader.onload = function(event) {
@@ -103,19 +147,102 @@
           canvas.height = img.height;
           ctx.drawImage(img, 0, 0);
 
+          // Special-case: if format is gif, canvas.toBlob won't create an animated gif
+          // (it will create a static image). Animated GIF -> PDF or animated output would
+          // require server-side or specialized libraries; here we keep the original approach.
+
           canvas.toBlob(function(blob) {
             const convertedUrl = URL.createObjectURL(blob);
-            const previewContainer = document.getElementById("previewContainer");
-            previewContainer.innerHTML += '<p>Converted Preview:</p>' +
-              '<img src="' + convertedUrl + '" alt="Converted Image">' +
-              '<a class="download-btn" href="' + convertedUrl + '" download="converted-image.' + format + '">Download Converted Image</a>';
-          }, 'image/' + format);
+            const a = document.createElement('a');
+            a.className = 'download-btn';
+            a.href = convertedUrl;
+            a.download = 'converted-image.' + format;
+
+            // append preview + download link
+            const div = document.createElement('div');
+            div.innerHTML = '<p>Converted Preview:</p>';
+            const im = document.createElement('img');
+            im.src = convertedUrl;
+            im.alt = 'Converted Image';
+            im.style.maxWidth = '100%';
+            im.style.borderRadius = '8px';
+            div.appendChild(im);
+            div.appendChild(a);
+
+            previewContainer.appendChild(div);
+          }, 'image/' + (format === 'jpeg' ? 'jpeg' : format));
         };
         img.src = event.target.result;
       };
 
       reader.readAsDataURL(originalFile);
     }
+
+    // --- Convert multiple (or single) selected images into one mixed PDF ---
+    document.getElementById('convertPdfBtn').addEventListener('click', convertToPDF);
+
+    async function convertToPDF() {
+      if (!originalFiles.length) return alert('Please select one or more images first.');
+
+      // Using jsPDF (loaded from CDN at top)
+      const { jsPDF } = window.jspdf;
+      const pdf = new jsPDF();
+
+      for (let i = 0; i < originalFiles.length; i++) {
+        const file = originalFiles[i];
+        const dataUrl = await readFileAsDataURL(file);
+        // load image to get natural size
+        const img = await loadImage(dataUrl);
+
+        // Get page size in points (jsPDF default unit is 'pt' in some builds, but getWidth/Height works)
+        const pageWidth = pdf.internal.pageSize.getWidth();
+        const pageHeight = pdf.internal.pageSize.getHeight();
+
+        // calculate fit size
+        const ratio = Math.min(pageWidth / img.width, pageHeight / img.height);
+        const imgWidth = img.width * ratio;
+        const imgHeight = img.height * ratio;
+        const x = (pageWidth - imgWidth) / 2;
+        const y = (pageHeight - imgHeight) / 2;
+
+        // choose image format for jsPDF (PNG/JPEG)
+        let imgFormat = 'JPEG';
+        if (file.type === 'image/png' || file.type === 'image/webp') imgFormat = 'PNG';
+
+        if (i > 0) pdf.addPage();
+        try {
+          pdf.addImage(dataUrl, imgFormat, x, y, imgWidth, imgHeight);
+        } catch (err) {
+          // fallback: try treating as PNG
+          try { pdf.addImage(dataUrl, 'PNG', x, y, imgWidth, imgHeight); }
+          catch (e) { console.error('Failed to add image to PDF', e); }
+        }
+      }
+
+      // save the PDF
+      pdf.save('images.pdf');
+    }
+
+    // helper: read file as data URL
+    function readFileAsDataURL(file) {
+      return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result);
+        reader.onerror = reject;
+        reader.readAsDataURL(file);
+      });
+    }
+
+    // helper: load image object from data URL
+    function loadImage(dataUrl) {
+      return new Promise((resolve, reject) => {
+        const img = new Image();
+        img.onload = () => resolve(img);
+        img.onerror = reject;
+        img.src = dataUrl;
+      });
+    }
+
   </script>
 </body>
 </html>
